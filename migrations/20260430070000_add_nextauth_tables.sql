@@ -3,9 +3,8 @@ ALTER TABLE t_users ADD COLUMN email_verified TIMESTAMPTZ;
 ALTER TABLE t_users ADD COLUMN image TEXT;
 ALTER TABLE t_users ALTER COLUMN password DROP NOT NULL; -- NextAuth OAuth tidak butuh password
 
-
--- Membuat tabel-tabel tambahan untuk NextAuth
-CREATE TABLE accounts (
+-- Membuat tabel-tabel tambahan untuk NextAuth dengan prefix na_
+CREATE TABLE na_accounts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL REFERENCES t_users (id) ON DELETE CASCADE,
     type VARCHAR(255) NOT NULL,
@@ -23,7 +22,7 @@ CREATE TABLE accounts (
     UNIQUE (provider, provider_account_id)
 );
 
-CREATE TABLE sessions (
+CREATE TABLE na_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_token VARCHAR(255) NOT NULL UNIQUE,
     user_id UUID NOT NULL REFERENCES t_users (id) ON DELETE CASCADE,
@@ -31,7 +30,7 @@ CREATE TABLE sessions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE verification_tokens (
+CREATE TABLE na_verification_tokens (
     identifier VARCHAR(255) NOT NULL,
     token VARCHAR(255) NOT NULL UNIQUE,
     expires TIMESTAMPTZ NOT NULL,
@@ -39,11 +38,12 @@ CREATE TABLE verification_tokens (
 );
 
 -- +goose Down
-DROP TABLE IF EXISTS verification_tokens;
-DROP TABLE IF EXISTS sessions;
-DROP TABLE IF EXISTS accounts;
+DROP TABLE IF EXISTS na_verification_tokens;
+DROP TABLE IF EXISTS na_sessions;
+DROP TABLE IF EXISTS na_accounts;
 ALTER TABLE t_users DROP COLUMN IF EXISTS email_verified;
 ALTER TABLE t_users DROP COLUMN IF EXISTS image;
 ALTER TABLE t_users ALTER COLUMN password SET NOT NULL;
+
 
 
