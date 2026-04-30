@@ -87,7 +87,7 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool, f ProjectListFilters)
 		n++
 	}
 	if f.DeveloperID != "" {
-		where.WriteString(fmt.Sprintf(` AND p."developerId" = $%d `, n))
+		where.WriteString(fmt.Sprintf(` AND p.developer_id = $%d `, n))
 		args = append(args, f.DeveloperID)
 		n++
 	}
@@ -97,25 +97,25 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool, f ProjectListFilters)
 		n++
 	}
 	if f.MinPrice != nil {
-		where.WriteString(fmt.Sprintf(` AND p."startPrice" >= $%d `, n))
+		where.WriteString(fmt.Sprintf(` AND p.starting_price >= $%d `, n))
 		args = append(args, *f.MinPrice)
 		n++
 	}
 	if f.MaxPrice != nil {
-		where.WriteString(fmt.Sprintf(` AND p."startPrice" <= $%d `, n))
+		where.WriteString(fmt.Sprintf(` AND p.starting_price <= $%d `, n))
 		args = append(args, *f.MaxPrice)
 		n++
 	}
 	if f.Search != "" {
 		pat := "%" + f.Search + "%"
 		where.WriteString(fmt.Sprintf(
-			` AND (p.name ILIKE $%d OR p.location ILIKE $%d OR d.name ILIKE $%d) `,
+			` AND (p.project_name ILIKE $%d OR p.location ILIKE $%d OR d.company_name ILIKE $%d) `,
 			n, n+1, n+2))
 		args = append(args, pat, pat, pat)
 		n += 3
 	}
 
-	countSQL := `SELECT COUNT(*) FROM "Project" p INNER JOIN "Developer" d ON p."developerId" = d.id` + where.String()
+	countSQL := `SELECT COUNT(*) FROM t_projects p INNER JOIN t_developers d ON p.developer_id = d.id` + where.String()
 
 	var total int64
 	if err := pool.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
@@ -124,13 +124,13 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool, f ProjectListFilters)
 
 	listSQL := `
 SELECT
-  p.id, p.name, p.location, p.description, p."startPrice", p.promo, p.image, p.status::text,
-  p."createdAt"::text,
-  d.id, d.name, d.logo,
-  (SELECT COUNT(*)::int FROM "ProjectImage" pi WHERE pi."projectId" = p.id)
-FROM "Project" p
-INNER JOIN "Developer" d ON p."developerId" = d.id
-` + where.String() + fmt.Sprintf(` ORDER BY p."createdAt" DESC LIMIT $%d OFFSET $%d`, n, n+1)
+  p.id, p.project_name, p.location, p.description, p.starting_price, p.promo_text, p.cover_image, p.status::text,
+  p.created_at::text,
+  d.id, d.company_name, d.logo,
+  (SELECT COUNT(*)::int FROM t_galleries pi WHERE pi.project_id = p.id)
+FROM t_projects p
+INNER JOIN t_developers d ON p.developer_id = d.id
+` + where.String() + fmt.Sprintf(` ORDER BY p.created_at DESC LIMIT $%d OFFSET $%d`, n, n+1)
 
 	args = append(args, f.Limit, f.Skip)
 
@@ -162,10 +162,10 @@ INNER JOIN "Developer" d ON p."developerId" = d.id
 func GetProjectByID(ctx context.Context, pool *pgxpool.Pool, id string) (*ProjectDetail, error) {
 	const q = `
 SELECT
-  p.id, p.name, p.location, p.description, p."startPrice", p.promo, p.image, p.status::text, p."createdAt"::text,
-  d.id, d.name, d.logo, d.description, d.website
-FROM "Project" p
-INNER JOIN "Developer" d ON p."developerId" = d.id
+  p.id, p.project_name, p.location, p.description, p.starting_price, p.promo_text, p.cover_image, p.status::text, p.created_at::text,
+  d.id, d.company_name, d.logo, d.description, d.website
+FROM t_projects p
+INNER JOIN t_developers d ON p.developer_id = d.id
 WHERE p.id = $1
 `
 
@@ -182,7 +182,8 @@ WHERE p.id = $1
 	d.Developer.Description = devDesc
 	d.Developer.Website = devWeb
 
-	gq := `SELECT id, url FROM "ProjectImage" WHERE "projectId" = $1 ORDER BY id ASC LIMIT 20`
+	gq := `SELECT id, image FROM t_galleries WHERE project_id = $1 ORDER BY id ASC LIMIT 20`
+
 	grows, err := pool.Query(ctx, gq, id)
 	if err != nil {
 		return nil, err
