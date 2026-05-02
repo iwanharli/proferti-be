@@ -799,6 +799,7 @@ func (a *API) GetGFMRiskSummary(w http.ResponseWriter, r *http.Request) {
 			"flood_occurrence_count": floodOccurrenceCount,
 			"risk_score":             riskScore,
 			"last_updated_at":        lastUpdatedAt,
+			"total_area_ha":          totalArea,
 		})
 	}
 
