@@ -581,8 +581,8 @@ func (a *API) GetFloodMVT(w http.ResponseWriter, r *http.Request) {
 				ST_AsMVTGeom(ST_Transform(geom, 3857), ST_TileEnvelope($1, $2, $3), 4096, 256, true) AS geom
 			FROM gfm_flood_polygon
 			WHERE geom && ST_Transform(ST_TileEnvelope($1, $2, $3), 4326)
-			AND ($4 = '' OR acquisition_time >= $4::timestamp)
-			AND ($5 = '' OR acquisition_time <= $5::timestamp + interval '1 day')
+			AND ($4 = '' OR acquisition_time >= NULLIF($4, '')::timestamp)
+			AND ($5 = '' OR acquisition_time <= NULLIF($5, '')::timestamp + interval '1 day')
 		),
 		exclusion_mvt_geom AS (
 			SELECT 
