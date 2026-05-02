@@ -602,7 +602,7 @@ func (a *API) GetFloodMVT(w http.ResponseWriter, r *http.Request) {
 	`
 
 	var mvt []byte
-	err = a.Pool.QueryRow(r.Context(), query, z, x, y, startDate, endDate).Scan(&mvt)
+	err := a.Pool.QueryRow(r.Context(), query, z, x, y, startDate, endDate).Scan(&mvt)
 	if (err != nil) {
 		log.Printf("❌ MVT Error (z=%d, x=%d, y=%d): %v", z, x, y, err)
 		errJSON(w, http.StatusInternalServerError, "failed to generate mvt: "+err.Error())
