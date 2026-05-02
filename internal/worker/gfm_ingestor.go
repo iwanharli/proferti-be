@@ -239,13 +239,16 @@ func ProcessGFMScene(ctx context.Context, pool *pgxpool.Pool, sceneID string, bb
 	defer os.RemoveAll(tempDir)
 
 	gdalBin := os.Getenv("GDAL_BIN_PATH")
-	if gdalBin == "" {
-		gdalBin = "/Applications/Postgres.app/Contents/Versions/18/bin"
+	gdalExecutable := "gdalwarp"
+	rasterExecutable := "raster2pgsql"
+	if gdalBin != "" {
+		gdalExecutable = filepath.Join(gdalBin, "gdalwarp")
+		rasterExecutable = filepath.Join(gdalBin, "raster2pgsql")
 	}
 
 	// 1. Download and clip 'ensemble_flood_extent'
 	tifPath := filepath.Join(tempDir, "clip_extent.tif")
-	warpCmd := exec.Command(filepath.Join(gdalBin, "gdalwarp"),
+	warpCmd := exec.Command(gdalExecutable,
 		"-overwrite", "-t_srs", "EPSG:4326", "-te_srs", "EPSG:4326",
 		"-te", fmt.Sprintf("%f", bbox[0]), fmt.Sprintf("%f", bbox[1]), fmt.Sprintf("%f", bbox[2]), fmt.Sprintf("%f", bbox[3]),
 		"-of", "GTiff", "/vsicurl/"+href, tifPath,
@@ -259,7 +262,7 @@ func ProcessGFMScene(ctx context.Context, pool *pgxpool.Pool, sceneID string, bb
 	err = pool.QueryRow(ctx, "SELECT asset_href FROM gfm_asset WHERE scene_id = $1 AND band_name = 'ensemble_likelihood'", sceneID).Scan(&likelihoodHref)
 	likelihoodTifPath := filepath.Join(tempDir, "clip_likelihood.tif")
 	if err == nil {
-		warpLikelihood := exec.Command(filepath.Join(gdalBin, "gdalwarp"),
+		warpLikelihood := exec.Command(gdalExecutable,
 			"-overwrite", "-t_srs", "EPSG:4326", "-te_srs", "EPSG:4326",
 			"-te", fmt.Sprintf("%f", bbox[0]), fmt.Sprintf("%f", bbox[1]), fmt.Sprintf("%f", bbox[2]), fmt.Sprintf("%f", bbox[3]),
 			"-of", "GTiff", "/vsicurl/"+likelihoodHref, likelihoodTifPath,
@@ -272,7 +275,7 @@ func ProcessGFMScene(ctx context.Context, pool *pgxpool.Pool, sceneID string, bb
 	err = pool.QueryRow(ctx, "SELECT asset_href FROM gfm_asset WHERE scene_id = $1 AND band_name = 'exclusion_mask'", sceneID).Scan(&exclusionHref)
 	exclusionTifPath := filepath.Join(tempDir, "clip_exclusion.tif")
 	if err == nil {
-		warpExclusion := exec.Command(filepath.Join(gdalBin, "gdalwarp"),
+		warpExclusion := exec.Command(gdalExecutable,
 			"-overwrite", "-t_srs", "EPSG:4326", "-te_srs", "EPSG:4326",
 			"-te", fmt.Sprintf("%f", bbox[0]), fmt.Sprintf("%f", bbox[1]), fmt.Sprintf("%f", bbox[2]), fmt.Sprintf("%f", bbox[3]),
 			"-of", "GTiff", "/vsicurl/"+exclusionHref, exclusionTifPath,
@@ -282,7 +285,7 @@ func ProcessGFMScene(ctx context.Context, pool *pgxpool.Pool, sceneID string, bb
 
 	// 2. raster2pgsql for EXTENT
 	fmt.Printf("   ➜ [%s] Converting raster to polygons...\n", dateStr)
-	rastCmd := exec.Command(filepath.Join(gdalBin, "raster2pgsql"),
+	rastCmd := exec.Command(rasterExecutable,
 		"-s", "4326", "-F", tifPath, "temp_flood_raster_"+sceneID,
 	)
 	sqlOut, err := rastCmd.Output()
