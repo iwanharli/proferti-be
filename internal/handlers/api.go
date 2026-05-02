@@ -561,12 +561,11 @@ func (a *API) GetFloodMVT(w http.ResponseWriter, r *http.Request) {
 	// 1. Get Z, X, Y from path
 	// Assuming URL pattern /api/flood-mvt/{z}/{x}/{y}.pbf
 	// For simplicity in this demo, we'll parse from URL path manually
-	var z, x, y int
-	_, err := fmt.Sscanf(r.URL.Path, "/api/flood-mvt/%d/%d/%d.pbf", &z, &x, &y)
-	if err != nil {
-		errJSON(w, http.StatusBadRequest, "invalid tile coordinates")
-		return
-	}
+	z, _ := strconv.Atoi(chi.URLParam(r, "z"))
+	x, _ := strconv.Atoi(chi.URLParam(r, "x"))
+	yStr := chi.URLParam(r, "y")
+	yStr = strings.Replace(yStr, ".pbf", "", 1)
+	y, _ := strconv.Atoi(yStr)
 
 	// 1. Get query parameters for date filtering
 	startDate := r.URL.Query().Get("start") // format: YYYY-MM-DD
@@ -599,12 +598,13 @@ func (a *API) GetFloodMVT(w http.ResponseWriter, r *http.Request) {
 		mvt_exclusion AS (
 			SELECT ST_AsMVT(exclusion_mvt_geom.*, 'exclusion_layer') as tile FROM exclusion_mvt_geom
 		)
-		SELECT (SELECT tile FROM mvt_flood) || (SELECT tile FROM mvt_exclusion);
+		SELECT COALESCE((SELECT tile FROM mvt_flood), ''::bytea) || COALESCE((SELECT tile FROM mvt_exclusion), ''::bytea);
 	`
 
 	var mvt []byte
 	err = a.Pool.QueryRow(r.Context(), query, z, x, y, startDate, endDate).Scan(&mvt)
-	if err != nil {
+	if (err != nil) {
+		log.Printf("❌ MVT Error (z=%d, x=%d, y=%d): %v", z, x, y, err)
 		errJSON(w, http.StatusInternalServerError, "failed to generate mvt: "+err.Error())
 		return
 	}
