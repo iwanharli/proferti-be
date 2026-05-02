@@ -40,11 +40,6 @@ func main() {
 	fmt.Println("🛰️  Fetching real Sentinel-1 flood data from Copernicus GFM API...")
 
 	// 4. Run Ingestion
-	// This will: 
-	// - Search STAC API for scenes
-	// - Download and clip rasters (EODC)
-	// - Vectorize to polygons
-	// - Update daily summaries and risk scores
 	err = worker.RunFullIngestionCycle(ctx, pool, startStr, endStr)
 	
 	if err != nil {
@@ -52,5 +47,4 @@ func main() {
 	}
 
 	fmt.Println("\n✅ Real GFM Ingestion completed successfully!")
-	fmt.Println("📊 You can now check the map and 'Top 5 Wilayah Banjir' for the latest real data.")
 }
