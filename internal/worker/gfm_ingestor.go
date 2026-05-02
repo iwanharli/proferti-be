@@ -236,6 +236,7 @@ func ProcessGFMScene(ctx context.Context, pool *pgxpool.Pool, sceneID string, bb
 	if err := os.MkdirAll(tempDir, 0755); err != nil {
 		return err
 	}
+	defer os.RemoveAll(tempDir)
 
 	gdalBin := os.Getenv("GDAL_BIN_PATH")
 	if gdalBin == "" {
@@ -342,7 +343,6 @@ func ProcessGFMScene(ctx context.Context, pool *pgxpool.Pool, sceneID string, bb
 	pool.Exec(ctx, "DROP TABLE IF EXISTS "+tempTable)
 	pool.Exec(ctx, "DROP TABLE IF EXISTS \"temp_likelihood_raster_"+sceneID+"\"")
 	pool.Exec(ctx, "DROP TABLE IF EXISTS \"temp_exclusion_raster_"+sceneID+"\"")
-	os.RemoveAll(tempDir)
 	
 	return err
 }
@@ -621,18 +621,20 @@ func AggregateGFMStats(ctx context.Context, pool *pgxpool.Pool, sceneID string) 
 // UpdateHistoricalRiskScores calculates long-term risk metrics based on all ingested data
 func UpdateHistoricalRiskScores(ctx context.Context, pool *pgxpool.Pool) error {
 	query := `
-		INSERT INTO gfm_admin_risk_score (admin_level, admin_code, admin_name, flood_occurrence_count, risk_score, last_updated_at)
+		INSERT INTO gfm_admin_risk_score (admin_level, admin_code, admin_name, total_detections, flood_occurrence_count, risk_score, last_updated_at)
 		SELECT 
 			admin_level,
 			admin_code,
 			MAX(admin_name),
-			COUNT(DISTINCT date) FILTER (WHERE flood_percentage > 0.1), -- Count days with > 0.1% flood
-			AVG(flood_percentage), -- Use avg flood intensity as a simple risk score
+			COUNT(*), 
+			COUNT(*) FILTER (WHERE flood_percentage > 0), 
+			AVG(flood_percentage), 
 			NOW()
 		FROM gfm_admin_daily_summary
 		GROUP BY admin_level, admin_code
 		ON CONFLICT (admin_level, admin_code) DO UPDATE
 		SET 
+			total_detections = EXCLUDED.total_detections,
 			flood_occurrence_count = EXCLUDED.flood_occurrence_count,
 			risk_score = EXCLUDED.risk_score,
 			last_updated_at = NOW()

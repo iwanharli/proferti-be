@@ -118,7 +118,7 @@ func CreateDeveloperForUser(
 // GetDeveloperByID returns a developer profile by its primary key.
 func GetDeveloperByID(ctx context.Context, pool *pgxpool.Pool, id string) (*Developer, error) {
 	const q = `
-		SELECT id, company_name, slug, owner_name, phone, email,
+		SELECT id::text, company_name, slug, owner_name, phone, email,
 		       logo, description, website, region_id, created_at::text
 		FROM t_developers
 		WHERE id = $1
@@ -147,4 +147,23 @@ func UpdateDeveloper(
 	`
 	_, err := pool.Exec(ctx, q, name, slug, description, website, logo, id)
 	return err
+}
+
+// GetDeveloperBySlug returns a developer profile by its slug.
+func GetDeveloperBySlug(ctx context.Context, pool *pgxpool.Pool, slug string) (*Developer, error) {
+	const q = `
+		SELECT id::text, company_name, slug, owner_name, phone, email,
+		       logo, description, website, region_id, created_at::text
+		FROM t_developers
+		WHERE slug = $1
+	`
+	var d Developer
+	err := pool.QueryRow(ctx, q, slug).Scan(
+		&d.ID, &d.Name, &d.Slug, &d.OwnerName, &d.Phone, &d.Email,
+		&d.Logo, &d.Description, &d.Website, &d.RegionID, &d.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &d, nil
 }

@@ -408,6 +408,7 @@ func (a *API) GetUnitType(w http.ResponseWriter, r *http.Request) {
 type developerRow struct {
 	ID           string  `json:"id"`
 	Name         string  `json:"name"`
+	Slug         string  `json:"slug"`
 	Logo         *string `json:"logo,omitempty"`
 	Description  *string `json:"description,omitempty"`
 	ProjectCount int     `json:"projectCount"`
@@ -416,7 +417,7 @@ type developerRow struct {
 // GET /api/developers
 func (a *API) ListDevelopers(w http.ResponseWriter, r *http.Request) {
 	rows, err := a.Pool.Query(r.Context(),
-		`SELECT d.id, d.company_name AS name, d.logo, d.description, 
+		`SELECT d.id, d.company_name AS name, d.slug, d.logo, d.description, 
 		        (SELECT COUNT(*) FROM t_projects p WHERE p.developer_id = d.id) AS project_count
 		 FROM t_developers d 
 		 ORDER BY project_count DESC, d.company_name ASC 
@@ -430,7 +431,7 @@ func (a *API) ListDevelopers(w http.ResponseWriter, r *http.Request) {
 	var list []developerRow
 	for rows.Next() {
 		var d developerRow
-		if err := rows.Scan(&d.ID, &d.Name, &d.Logo, &d.Description, &d.ProjectCount); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Slug, &d.Logo, &d.Description, &d.ProjectCount); err != nil {
 			errJSON(w, http.StatusInternalServerError, "scan failed: "+err.Error())
 			return
 		}
@@ -445,20 +446,32 @@ func (a *API) ListDevelopers(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/developers/{id}
 func (a *API) GetDeveloper(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if id == "" {
+	idOrSlug := chi.URLParam(r, "id")
+	if idOrSlug == "" {
 		errJSON(w, http.StatusBadRequest, "ID developer diperlukan")
 		return
 	}
-	dev, err := repo.GetDeveloperByID(r.Context(), a.Pool, id)
+	
+	// Try lookup by slug first
+	dev, err := repo.GetDeveloperBySlug(r.Context(), a.Pool, idOrSlug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			errJSON(w, http.StatusNotFound, "developer tidak ditemukan")
+			// Try lookup by ID
+			dev, err = repo.GetDeveloperByID(r.Context(), a.Pool, idOrSlug)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					errJSON(w, http.StatusNotFound, "developer tidak ditemukan")
+					return
+				}
+				errJSON(w, http.StatusInternalServerError, "query ID failed: "+err.Error())
+				return
+			}
+		} else {
+			errJSON(w, http.StatusInternalServerError, "query slug failed: "+err.Error())
 			return
 		}
-		errJSON(w, http.StatusInternalServerError, "query failed")
-		return
 	}
+	
 	writeJSON(w, http.StatusOK, map[string]any{"developer": dev})
 }
 

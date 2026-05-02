@@ -27,6 +27,7 @@ type ProjectListFilters struct {
 type DeveloperBrief struct {
 	ID   string  `json:"id"`
 	Name string  `json:"name"`
+	Slug string  `json:"slug"`
 	Logo *string `json:"logo,omitempty"`
 }
 
@@ -37,13 +38,15 @@ type Region struct {
 }
 
 type Location struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name"`
-	Address  *string `json:"address,omitempty"`
-	RegionID *int    `json:"regionId,omitempty"`
-	City     string  `json:"city"`               // Deprecated: used for frontend compat
-	Province *string `json:"province,omitempty"` // Deprecated: used for frontend compat
-	Region   *Region `json:"region,omitempty"`
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Address   *string  `json:"address,omitempty"`
+	RegionID  *int     `json:"regionId,omitempty"`
+	Latitude  *float64 `json:"latitude,omitempty"`
+	Longitude *float64 `json:"longitude,omitempty"`
+	City      string   `json:"city"`               // Deprecated: used for frontend compat
+	Province  *string  `json:"province,omitempty"` // Deprecated: used for frontend compat
+	Region    *Region  `json:"region,omitempty"`
 }
 
 type ProjectListRow struct {
@@ -83,6 +86,7 @@ type ProjectDetail struct {
 	Developer   struct {
 		ID          string  `json:"id"`
 		Name        string  `json:"name"`
+		Slug        string  `json:"slug"`
 		Logo        *string `json:"logo,omitempty"`
 		Description *string `json:"description,omitempty"`
 		Website     *string `json:"website,omitempty"`
@@ -184,9 +188,9 @@ func ListProjects(ctx context.Context, pool *pgxpool.Pool, f ProjectListFilters)
 SELECT
   p.id, p.project_name, p.slug, p.description, p.starting_price, p.promo_text, p.cover_image, p.status::text,
   p.created_at::text, p.project_type,
-  l.id, l.name, l.address, l.region_id,
+  l.id, l.name, l.address, l.region_id, l.latitude, l.longitude,
   r.id, r.kode, r.name,
-  d.id, d.company_name, d.logo,
+  d.id, d.company_name, d.slug, d.logo,
   p.polygon_coordinates,
   (SELECT COUNT(*)::int FROM t_project_galleries pi WHERE pi.project_id = p.id)
 FROM t_projects p
@@ -213,8 +217,9 @@ LEFT JOIN regions r ON l.region_id = r.id
 			&r.ID, &r.Name, &r.Slug, &r.Description, &r.StartPrice, &r.Promo, &r.Image, &r.Status,
 			&r.CreatedAt, &r.Type,
 			&r.Location.ID, &r.Location.Name, &r.Location.Address, &r.Location.RegionID,
+			&r.Location.Latitude, &r.Location.Longitude,
 			&regID, &regKode, &regName,
-			&r.Developer.ID, &r.Developer.Name, &devLogo,
+			&r.Developer.ID, &r.Developer.Name, &r.Developer.Slug, &devLogo,
 			&r.Polygon,
 			&r.GalleryCount,
 		); err != nil {
@@ -246,9 +251,9 @@ func getProject(ctx context.Context, pool *pgxpool.Pool, field, val string) (*Pr
 	q := fmt.Sprintf(`
 SELECT
   p.id, p.project_name, p.slug, p.description, p.starting_price, p.promo_text, p.cover_image, p.status::text, p.created_at::text,
-  l.id, l.name, l.address, l.region_id,
+  l.id, l.name, l.address, l.region_id, l.latitude, l.longitude,
   r.id, r.kode, r.name,
-  d.id, d.company_name, d.logo, d.description, d.website,
+  d.id, d.company_name, d.slug, d.logo, d.description, d.website,
   p.polygon_coordinates
 FROM t_projects p
 INNER JOIN t_developers d ON p.developer_id = d.id
@@ -264,8 +269,9 @@ WHERE %s = $1
 	err := pool.QueryRow(ctx, q, val).Scan(
 		&d.ID, &d.Name, &d.Slug, &d.Description, &d.StartPrice, &d.Promo, &d.Image, &d.Status, &d.CreatedAt,
 		&d.Location.ID, &d.Location.Name, &d.Location.Address, &d.Location.RegionID,
+		&d.Location.Latitude, &d.Location.Longitude,
 		&regID, &regKode, &regName,
-		&d.Developer.ID, &d.Developer.Name, &devLogo, &devDesc, &devWeb,
+		&d.Developer.ID, &d.Developer.Name, &d.Developer.Slug, &devLogo, &devDesc, &devWeb,
 		&d.Polygon,
 	)
 	if err != nil {
@@ -317,7 +323,7 @@ WHERE %s = $1
 
 func ListLocations(ctx context.Context, pool *pgxpool.Pool) ([]Location, error) {
 	rows, err := pool.Query(ctx, `
-		SELECT DISTINCT ON (l.id) l.id, l.name, l.address, l.region_id, r.id, r.kode, r.name
+		SELECT DISTINCT ON (l.id) l.id, l.name, l.address, l.region_id, l.latitude, l.longitude, r.id, r.kode, r.name
 		FROM t_project_locations l
 		INNER JOIN t_projects p ON p.location_id = l.id
 		LEFT JOIN regions r ON l.region_id = r.id
@@ -333,7 +339,7 @@ func ListLocations(ctx context.Context, pool *pgxpool.Pool) ([]Location, error) 
 		var l Location
 		var regID *int
 		var regKode, regName *string
-		if err := rows.Scan(&l.ID, &l.Name, &l.Address, &l.RegionID, &regID, &regKode, &regName); err != nil {
+		if err := rows.Scan(&l.ID, &l.Name, &l.Address, &l.RegionID, &l.Latitude, &l.Longitude, &regID, &regKode, &regName); err != nil {
 			return nil, err
 		}
 		if regID != nil {

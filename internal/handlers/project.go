@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"proferti-be/internal/repo"
+	"proferti-be/internal/worker"
 )
 
 // POST /api/projects
@@ -48,6 +50,12 @@ func (a *API) CreateProject(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Trigger GFM ingestion for the new project's area immediately in background
+	go func() {
+		// We use an empty date range to get the latest data
+		_ = worker.RunFullIngestionCycle(context.Background(), a.Pool, "", "")
+	}()
+
 	writeJSON(w, http.StatusCreated, map[string]any{"project": proj})
 }
 
