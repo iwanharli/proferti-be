@@ -113,8 +113,8 @@ func FetchLatestGFMScenes(ctx context.Context, pool *pgxpool.Pool, bbox [4]float
 		}},
 	}
 
-	// Default date range: last 30 days if not provided
-	dateRange := fmt.Sprintf("%s/%s", time.Now().AddDate(0, 0, -30).Format(time.RFC3339), time.Now().Format(time.RFC3339))
+	// Default date range: last 60 days if not provided (2 months)
+	dateRange := fmt.Sprintf("%s/%s", time.Now().AddDate(0, 0, -60).Format(time.RFC3339), time.Now().Format(time.RFC3339))
 	
 	if startDate != "" && endDate != "" {
 		// Normalize YYYY-MM-DD to RFC3339 if needed

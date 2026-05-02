@@ -123,10 +123,9 @@ func main() {
 		}
 	}
 
-	// NEW: Execute real GFM ingestion process
-	fmt.Println("\nTriggering real GFM Ingestion (API Process) for January 2026...")
-	// We use 2026-01-01 to 2026-01-15 as we know it has real flood data for Tangerang
-	err = worker.RunFullIngestionCycle(ctx, pool, "2026-01-01", "2026-01-15")
+	// Triggering real GFM Ingestion for the last 2 months (default)
+	fmt.Println("\nTriggering real GFM Ingestion (API Process) for the last 2 months...")
+	err = worker.RunFullIngestionCycle(ctx, pool, "", "")
 	if err != nil {
 		log.Printf("Warning: GFM Ingestion failed: %v", err)
 	} else {
