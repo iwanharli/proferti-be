@@ -753,11 +753,11 @@ func (a *API) GetGFMRiskSummary(w http.ResponseWriter, r *http.Request) {
 				COUNT(DISTINCT date)::int as flood_occurrence_count,
 				MAX(flood_percentage) as risk_score,
 				MAX(last_detected_at) as last_updated_at,
-				SUM(total_flood_area_m2) as total_area
+				(SUM(total_flood_area_m2) / 10000.0) as total_area_ha
 			FROM gfm_admin_daily_summary
 			WHERE date BETWEEN $1 AND $2
 			GROUP BY admin_level, admin_code, admin_name
-			ORDER BY total_area DESC
+			ORDER BY total_area_ha DESC
 			LIMIT 100
 		`
 		args = append(args, start, end)
@@ -766,9 +766,9 @@ func (a *API) GetGFMRiskSummary(w http.ResponseWriter, r *http.Request) {
 		query = `
 			SELECT 
 				admin_level, admin_code, admin_name, total_detections, flood_occurrence_count, risk_score, last_updated_at,
-				(risk_score * 1000000) as total_area -- fallback for ordering
+				(risk_score * 100) as total_area_ha -- fallback for ordering (using percentage as ha for demo)
 			FROM gfm_admin_risk_score
-			ORDER BY risk_score DESC
+			ORDER BY total_area_ha DESC
 			LIMIT 100
 		`
 	}
