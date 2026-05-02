@@ -497,9 +497,10 @@ func (a *API) GetProjectsMeta(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/regions/geojson
 func (a *API) GetRegionsGeoJSON(w http.ResponseWriter, r *http.Request) {
-	data, err := repo.GetRegionsGeoJSON(r.Context(), a.Pool)
+	parent := r.URL.Query().Get("parent")
+	data, err := repo.GetRegionsGeoJSON(r.Context(), a.Pool, parent)
 	if err != nil {
-		errJSON(w, http.StatusInternalServerError, "failed to fetch geojson: "+err.Error())
+		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, data)

@@ -385,12 +385,20 @@ func GetProjectsMeta(ctx context.Context, pool *pgxpool.Pool) (map[string]any, e
 	}, nil
 }
 
-func GetRegionsGeoJSON(ctx context.Context, pool *pgxpool.Pool) (map[string]any, error) {
-	// Only fetch provinces (kode length = 2) for performance and clarity
-	query := `
+func GetRegionsGeoJSON(ctx context.Context, pool *pgxpool.Pool, parentKode string) (map[string]any, error) {
+	var whereClause string
+	if parentKode != "" {
+		// Fetch cities for a specific province
+		whereClause = fmt.Sprintf("WHERE kode LIKE '%s.%%' AND LENGTH(kode) > 2", parentKode)
+	} else {
+		// Only fetch provinces (kode length = 2) for performance and clarity
+		whereClause = "WHERE LENGTH(kode) = 2"
+	}
+
+	query := fmt.Sprintf(`
 		SELECT json_build_object(
 			'type', 'FeatureCollection',
-			'features', json_agg(
+			'features', COALESCE(json_agg(
 				json_build_object(
 					'type', 'Feature',
 					'id', id,
@@ -401,14 +409,15 @@ func GetRegionsGeoJSON(ctx context.Context, pool *pgxpool.Pool) (map[string]any,
 						'name', name
 					)
 				)
-			)
+			), '[]'::json)
 		)
 		FROM (
 			SELECT id, kode, name, geom 
 			FROM regions 
-			WHERE LENGTH(kode) = 2
+			%s
 		) AS t
-	`
+	`, whereClause)
+
 	var result map[string]any
 	err := pool.QueryRow(ctx, query).Scan(&result)
 	return result, err
