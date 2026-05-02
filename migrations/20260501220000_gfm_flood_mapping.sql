@@ -1,6 +1,6 @@
--- +goose Up
 -- Aktifkan PostGIS & pgcrypto jika belum
 CREATE EXTENSION IF NOT EXISTS postgis;
+CREATE EXTENSION IF NOT EXISTS postgis_raster;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 1. Tabel scene / produk GFM (Metadata Citra)
