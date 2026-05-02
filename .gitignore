@@ -5,3 +5,6 @@
 *.test
 *.out
 vendor/
+server
+tmp_server
+data/gfm/*

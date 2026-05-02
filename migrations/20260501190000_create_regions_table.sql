@@ -1,0 +1,23 @@
+-- +goose Up
+-- Enable PostGIS
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+CREATE TABLE IF NOT EXISTS regions (
+    id SERIAL PRIMARY KEY,
+    kode VARCHAR(13) UNIQUE NOT NULL,
+    name VARCHAR(255),
+    lat DOUBLE PRECISION,
+    lng DOUBLE PRECISION,
+    path TEXT,
+    status INT2 DEFAULT 1,
+    geom GEOMETRY(MultiPolygon, 4326),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_regions_kode ON regions(kode);
+CREATE INDEX IF NOT EXISTS idx_regions_geom ON regions USING GIST(geom);
+
+-- +goose Down
+DROP TABLE IF EXISTS regions;
+DROP EXTENSION IF EXISTS postgis;
