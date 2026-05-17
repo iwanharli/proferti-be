@@ -15,23 +15,40 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const (
+	stacPageSize         = 50  // scenes per STAC request
+	maxScenesPerLocation = 500 // hard cap per AOI per run (backfill safety)
+	stacSearchURL        = "https://stac.eodc.eu/api/v1/search"
+)
+
 type STACSearchRequest struct {
 	Collections []string `json:"collections"`
 	Datetime    string   `json:"datetime"`
 	Limit       int      `json:"limit"`
 	Intersects  any      `json:"intersects"`
+	Token       string   `json:"token,omitempty"` // pagination cursor
+}
+
+// STACLink represents a STAC API hypermedia link (used for pagination).
+type STACLink struct {
+	Rel    string         `json:"rel"`
+	Href   string         `json:"href"`
+	Method string         `json:"method,omitempty"`
+	Body   map[string]any `json:"body,omitempty"`
 }
 
 type STACSearchResponse struct {
-	Features []STACFeature `json:"features"`
+	Features      []STACFeature `json:"features"`
+	Links         []STACLink    `json:"links"`
+	NumberMatched int           `json:"numberMatched"`
 }
 
 type STACFeature struct {
-	ID         string `json:"id"`
-	BBox       []float64 `json:"bbox"`
-	Geometry   any `json:"geometry"`
+	ID         string         `json:"id"`
+	BBox       []float64      `json:"bbox"`
+	Geometry   any            `json:"geometry"`
 	Properties map[string]any `json:"properties"`
-	Assets map[string]struct {
+	Assets     map[string]struct {
 		Href string `json:"href"`
 	} `json:"assets"`
 }
@@ -99,9 +116,9 @@ func RunFullIngestionCycle(ctx context.Context, pool *pgxpool.Pool, startDate, e
 	return nil
 }
 
-// FetchLatestGFMScenes searches for GFM items and saves metadata to DB. Returns a slice of scene IDs.
+// FetchLatestGFMScenes searches for GFM items via STAC API with pagination.
+// Returns slice of internal scene UUIDs (already inserted to gfm_scene).
 func FetchLatestGFMScenes(ctx context.Context, pool *pgxpool.Pool, bbox [4]float64, startDate, endDate string) ([]string, error) {
-	// Jakarta BBox: [106.60, -6.40, 107.10, -5.90]
 	intersects := map[string]any{
 		"type": "Polygon",
 		"coordinates": [][][]float64{{
@@ -113,64 +130,103 @@ func FetchLatestGFMScenes(ctx context.Context, pool *pgxpool.Pool, bbox [4]float
 		}},
 	}
 
-	// Default date range: last 60 days if not provided (2 months)
-	dateRange := fmt.Sprintf("%s/%s", time.Now().AddDate(0, 0, -60).Format(time.RFC3339), time.Now().Format(time.RFC3339))
-	
+	// Default: last 60 days for the daily cron. Explicit range is used for backfill.
+	dateRange := fmt.Sprintf("%s/%s",
+		time.Now().AddDate(0, 0, -60).Format(time.RFC3339),
+		time.Now().Format(time.RFC3339),
+	)
 	if startDate != "" && endDate != "" {
-		// Normalize YYYY-MM-DD to RFC3339 if needed
-		s := startDate
+		s, e := startDate, endDate
 		if len(s) == 10 {
-			s = s + "T00:00:00Z"
+			s += "T00:00:00Z"
 		}
-		e := endDate
 		if len(e) == 10 {
-			e = e + "T23:59:59Z"
+			e += "T23:59:59Z"
 		}
 		dateRange = fmt.Sprintf("%s/%s", s, e)
 	}
 
-	reqBody := STACSearchRequest{
-		Collections: []string{"GFM"},
-		Datetime:    dateRange,
-		Limit:       10,
-		Intersects:  intersects,
-	}
-
-	jsonData, _ := json.Marshal(reqBody)
-	resp, err := http.Post("https://stac.eodc.eu/api/v1/search", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var stacResp STACSearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&stacResp); err != nil {
-		return nil, err
-	}
-
 	var sceneIDs []string
-	for _, feat := range stacResp.Features {
-		// Extract specific fields from properties map
+	token := ""
+	page := 0
+
+	for {
+		page++
+		reqBody := STACSearchRequest{
+			Collections: []string{"GFM"},
+			Datetime:    dateRange,
+			Limit:       stacPageSize,
+			Intersects:  intersects,
+			Token:       token,
+		}
+
+		jsonData, _ := json.Marshal(reqBody)
+		resp, err := http.Post(stacSearchURL, "application/json", bytes.NewBuffer(jsonData))
+		if err != nil {
+			return sceneIDs, fmt.Errorf("STAC request page %d failed: %w", page, err)
+		}
+
+		var stacResp STACSearchResponse
+		decodeErr := json.NewDecoder(resp.Body).Decode(&stacResp)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return sceneIDs, fmt.Errorf("STAC decode page %d failed: %w", page, decodeErr)
+		}
+
+		if page == 1 && stacResp.NumberMatched > 0 {
+			fmt.Printf("   🔭 STAC: %d total scenes matched for this AOI.\n", stacResp.NumberMatched)
+		}
+		fmt.Printf("   📄 Page %d: %d scenes (accumulated: %d)\n", page, len(stacResp.Features), len(sceneIDs)+len(stacResp.Features))
+
+		ids, err := saveSTACFeatures(ctx, pool, stacResp.Features)
+		if err != nil {
+			return sceneIDs, err
+		}
+		sceneIDs = append(sceneIDs, ids...)
+
+		if len(sceneIDs) >= maxScenesPerLocation {
+			fmt.Printf("   ⚠️  Cap %d scenes reached — stopping pagination for this AOI.\n", maxScenesPerLocation)
+			break
+		}
+
+		// Advance pagination token from STAC next link
+		token = ""
+		for _, link := range stacResp.Links {
+			if link.Rel == "next" {
+				if t, ok := link.Body["token"].(string); ok && t != "" {
+					token = t
+				}
+				break
+			}
+		}
+		if token == "" || len(stacResp.Features) < stacPageSize {
+			break
+		}
+	}
+
+	fmt.Printf("   ✅ Fetched & saved %d scene(s) across %d page(s).\n", len(sceneIDs), page)
+	return sceneIDs, nil
+}
+
+// saveSTACFeatures upserts a batch of STAC features into gfm_scene + gfm_asset.
+func saveSTACFeatures(ctx context.Context, pool *pgxpool.Pool, features []STACFeature) ([]string, error) {
+	var ids []string
+	for _, feat := range features {
 		acqTimeStr, _ := feat.Properties["datetime"].(string)
 		acqTime, _ := time.Parse(time.RFC3339, acqTimeStr)
-		
+
 		platform, _ := feat.Properties["platform"].(string)
 		if platform == "" {
 			platform, _ = feat.Properties["constellation"].(string)
 		}
-		
-		// If platform is still sentinel-1, try to get specific S1A/S1B from parent
-		parent, _ := feat.Properties["parent"].(string)
-		if parent != "" && len(parent) > 3 {
+		if parent, _ := feat.Properties["parent"].(string); len(parent) > 3 {
 			platform = parent[:3] // e.g. "S1A" or "S1B"
 		}
-		
+
 		orbitDir, _ := feat.Properties["sat:orbit_state"].(string)
 		if orbitDir == "" {
-			// Smart Inference based on Jakarta Time
 			loc, _ := time.LoadLocation("Asia/Jakarta")
-			acqLocal := acqTime.In(loc)
-			if acqLocal.Hour() < 12 {
+			if acqTime.In(loc).Hour() < 12 {
 				orbitDir = "descending"
 			} else {
 				orbitDir = "ascending"
@@ -178,7 +234,6 @@ func FetchLatestGFMScenes(ctx context.Context, pool *pgxpool.Pool, bbox [4]float
 		}
 		relOrbit, _ := feat.Properties["sat:relative_orbit"].(float64)
 
-		// Convert Geometry to JSON string for footprint
 		geomJSON, _ := json.Marshal(feat.Geometry)
 		rawMetaJSON, _ := json.Marshal(feat.Properties)
 
@@ -186,7 +241,7 @@ func FetchLatestGFMScenes(ctx context.Context, pool *pgxpool.Pool, bbox [4]float
 			Source:          "copernicus_gfm",
 			STACItemID:      feat.ID,
 			AcquisitionTime: acqTime,
-			ProductTime:     time.Now(), // Placeholder or from metadata
+			ProductTime:     time.Now(),
 			Platform:        platform,
 			OrbitDirection:  orbitDir,
 			RelativeOrbit:   int(relOrbit),
@@ -197,29 +252,27 @@ func FetchLatestGFMScenes(ctx context.Context, pool *pgxpool.Pool, bbox [4]float
 
 		sceneID, err := repo.InsertGFMScene(ctx, pool, scene)
 		if err != nil {
-			fmt.Printf("Error inserting scene %s: %v\n", feat.ID, err)
+			fmt.Printf("   ⚠️  Skip scene %s: %v\n", feat.ID, err)
 			continue
 		}
+		ids = append(ids, sceneID)
 
-		sceneIDs = append(sceneIDs, sceneID)
-
-		// Save assets
+		// Persist relevant asset hrefs
 		for band, asset := range feat.Assets {
-			// We only care about some bands for now
-			if band == "ensemble_flood_extent" || band == "ensemble_likelihood" || band == "exclusion_mask" {
-				_, err := pool.Exec(ctx, `
-					INSERT INTO gfm_asset (scene_id, band_name, asset_href)
-					VALUES ($1, $2, $3)
-					ON CONFLICT (scene_id, band_name) DO NOTHING
-				`, sceneID, band, asset.Href)
-				if err != nil {
-					fmt.Printf("Error inserting asset %s for scene %s: %v\n", band, feat.ID, err)
-				}
+			if band != "ensemble_flood_extent" && band != "ensemble_likelihood" && band != "exclusion_mask" {
+				continue
+			}
+			_, err := pool.Exec(ctx, `
+				INSERT INTO gfm_asset (scene_id, band_name, asset_href)
+				VALUES ($1, $2, $3)
+				ON CONFLICT (scene_id, band_name) DO NOTHING
+			`, sceneID, band, asset.Href)
+			if err != nil {
+				fmt.Printf("   ⚠️  Asset %s for scene %s: %v\n", band, feat.ID, err)
 			}
 		}
 	}
-
-	return sceneIDs, nil
+	return ids, nil
 }
 
 // ProcessGFMScene downloads, clips, and polygonizes a GFM raster

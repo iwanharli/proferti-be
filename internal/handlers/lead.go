@@ -46,17 +46,22 @@ func (a *API) SubmitLead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "lead": lead})
 }
 
-// GET /api/leads?developerId={id}&limit={n}&skip={n}
+// GET /api/leads?userId={id}&limit={n}&skip={n}
 func (a *API) ListMyLeads(w http.ResponseWriter, r *http.Request) {
-	devID := r.URL.Query().Get("developerId")
-	if devID == "" {
-		errJSON(w, http.StatusBadRequest, "developerId is required")
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		errJSON(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+	dev, err := repo.GetDeveloperByUserID(r.Context(), a.Pool, userID)
+	if err != nil {
+		errJSON(w, http.StatusForbidden, "bukan developer terdaftar")
 		return
 	}
 	limit := parsePositiveInt(r.URL.Query().Get("limit"), 50)
 	skip := parsePositiveInt(r.URL.Query().Get("skip"), 0)
 
-	leads, total, err := repo.ListLeadsByDeveloper(r.Context(), a.Pool, devID, limit, skip)
+	leads, total, err := repo.ListLeadsByDeveloper(r.Context(), a.Pool, dev.ID, limit, skip)
 	if err != nil {
 		errJSON(w, http.StatusInternalServerError, "query failed")
 		return
@@ -75,11 +80,11 @@ func (a *API) ListMyLeads(w http.ResponseWriter, r *http.Request) {
 func (a *API) PatchLeadStatus(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {
-		DeveloperID string `json:"developerId"`
-		Status      string `json:"status"`
+		UserID string `json:"userId"`
+		Status string `json:"status"`
 	}
-	if err := decodeBody(r, &body); err != nil || body.Status == "" {
-		errJSON(w, http.StatusBadRequest, "status is required")
+	if err := decodeBody(r, &body); err != nil || body.Status == "" || body.UserID == "" {
+		errJSON(w, http.StatusBadRequest, "userId and status are required")
 		return
 	}
 	validStatuses := map[string]bool{"new": true, "contacted": true, "qualified": true, "closed": true}
@@ -87,7 +92,12 @@ func (a *API) PatchLeadStatus(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "invalid status value")
 		return
 	}
-	if err := repo.UpdateLeadStatus(r.Context(), a.Pool, id, body.DeveloperID, body.Status); err != nil {
+	dev, err := repo.GetDeveloperByUserID(r.Context(), a.Pool, body.UserID)
+	if err != nil {
+		errJSON(w, http.StatusForbidden, "bukan developer terdaftar")
+		return
+	}
+	if err := repo.UpdateLeadStatus(r.Context(), a.Pool, id, dev.ID, body.Status); err != nil {
 		errJSON(w, http.StatusInternalServerError, err.Error())
 		return
 	}

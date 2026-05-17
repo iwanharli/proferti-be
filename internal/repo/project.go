@@ -62,8 +62,9 @@ type ProjectListRow struct {
 	Type         *string        `json:"type,omitempty"`
 	CreatedAt    string         `json:"createdAt"`
 	Developer    DeveloperBrief `json:"developer"`
-	Polygon      any            `json:"polygon"`
-	GalleryCount int            `json:"galleryCount"`
+	Polygon         any `json:"polygon"`
+	GalleryCount    int `json:"galleryCount"`
+	UnitTypesCount  int `json:"unitTypesCount"`
 }
 
 type ProjectGalleryRow struct {
@@ -192,7 +193,8 @@ SELECT
   r.id, r.kode, r.name,
   d.id, d.company_name, d.slug, d.logo,
   p.polygon_coordinates,
-  (SELECT COUNT(*)::int FROM t_project_galleries pi WHERE pi.project_id = p.id)
+  (SELECT COUNT(*)::int FROM t_project_galleries  pg WHERE pg.project_id = p.id),
+  (SELECT COUNT(*)::int FROM t_project_unit_types ut WHERE ut.project_id = p.id)
 FROM t_projects p
 INNER JOIN t_developers d ON p.developer_id = d.id
 LEFT JOIN t_project_locations l ON p.location_id = l.id
@@ -222,6 +224,7 @@ LEFT JOIN regions r ON l.region_id = r.id
 			&r.Developer.ID, &r.Developer.Name, &r.Developer.Slug, &devLogo,
 			&r.Polygon,
 			&r.GalleryCount,
+			&r.UnitTypesCount,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -260,6 +263,7 @@ INNER JOIN t_developers d ON p.developer_id = d.id
 LEFT JOIN t_project_locations l ON p.location_id = l.id
 LEFT JOIN regions r ON l.region_id = r.id
 WHERE %s = $1
+LIMIT 1
 `, field)
 
 	var d ProjectDetail

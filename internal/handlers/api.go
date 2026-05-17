@@ -558,58 +558,69 @@ func (a *API) TriggerGFMIngestion(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/flood-mvt/{z}/{x}/{y}.pbf
 func (a *API) GetFloodMVT(w http.ResponseWriter, r *http.Request) {
-	// 1. Get Z, X, Y from path
-	// Assuming URL pattern /api/flood-mvt/{z}/{x}/{y}.pbf
-	// For simplicity in this demo, we'll parse from URL path manually
 	z, _ := strconv.Atoi(chi.URLParam(r, "z"))
 	x, _ := strconv.Atoi(chi.URLParam(r, "x"))
-	yStr := chi.URLParam(r, "y")
-	yStr = strings.Replace(yStr, ".pbf", "", 1)
+	yStr := strings.Replace(chi.URLParam(r, "y"), ".pbf", "", 1)
 	y, _ := strconv.Atoi(yStr)
 
-	// 1. Get query parameters for date filtering
-	startDate := r.URL.Query().Get("start") // format: YYYY-MM-DD
-	endDate := r.URL.Query().Get("end")     // format: YYYY-MM-DD
+	startDate := r.URL.Query().Get("start")
+	endDate := r.URL.Query().Get("end")
+	if startDate == "" {
+		startDate = time.Now().AddDate(-1, 0, 0).Format("2006-01-02")
+	}
+	if endDate == "" {
+		endDate = time.Now().Format("2006-01-02")
+	}
 
-	// 2. Generate Multi-layer MVT using PostGIS
+	// Tile envelope computed ONCE.
+	// ST_Union dissolves all overlapping polygons (from 10 scenes, 1597 rows) into
+	// a single merged geometry per tile — reduces ST_Transform calls from N to 1,
+	// and tile payload from 500KB+ to ~20-50KB.
+	// Exclusion layer removed — 101K rows caused consistent 30-60s query times.
 	query := `
-		WITH flood_mvt_geom AS (
-			SELECT 
-				id,
-				acquisition_time,
-				area_m2,
-				ST_AsMVTGeom(ST_Transform(geom, 3857), ST_TileEnvelope($1, $2, $3), 4096, 256, true) AS geom
-			FROM gfm_flood_polygon
-			WHERE geom && ST_Transform(ST_TileEnvelope($1, $2, $3), 4326)
-			AND ($4 = '' OR acquisition_time >= NULLIF($4, '')::timestamp)
-			AND ($5 = '' OR acquisition_time <= NULLIF($5, '')::timestamp + interval '1 day')
+		WITH tile AS (
+			SELECT
+				ST_TileEnvelope($1, $2, $3)                     AS env,
+				ST_Transform(ST_TileEnvelope($1, $2, $3), 4326) AS env4326
 		),
-		exclusion_mvt_geom AS (
-			SELECT 
-				id,
-				exclusion_type,
-				ST_AsMVTGeom(ST_Transform(geom, 3857), ST_TileEnvelope($1, $2, $3), 4096, 256, true) AS geom
-			FROM gfm_exclusion_polygon
-			WHERE geom && ST_Transform(ST_TileEnvelope($1, $2, $3), 4326)
+		raw AS (
+			SELECT geom
+			FROM gfm_flood_polygon, tile
+			WHERE geom && (SELECT env4326 FROM tile)
+			  AND acquisition_time >= $4::timestamp
+			  AND acquisition_time <= $5::timestamp + interval '1 day'
+			  AND area_m2 >= 100
 		),
-		mvt_flood AS (
-			SELECT ST_AsMVT(flood_mvt_geom.*, 'flood_layer') as tile FROM flood_mvt_geom
+		unioned AS (
+			SELECT ST_Union(geom) AS geom FROM raw
 		),
-		mvt_exclusion AS (
-			SELECT ST_AsMVT(exclusion_mvt_geom.*, 'exclusion_layer') as tile FROM exclusion_mvt_geom
+		flood_mvt AS (
+			SELECT
+				1::int AS id,
+				ST_AsMVTGeom(
+					ST_Transform(u.geom, 3857),
+					(SELECT env FROM tile), 4096, 256, true
+				) AS geom
+			FROM unioned u
+			WHERE u.geom IS NOT NULL
 		)
-		SELECT COALESCE((SELECT tile FROM mvt_flood), ''::bytea) || COALESCE((SELECT tile FROM mvt_exclusion), ''::bytea);
+		SELECT COALESCE(
+			(SELECT ST_AsMVT(f.*, 'flood_layer') FROM flood_mvt f WHERE f.geom IS NOT NULL),
+			''::bytea
+		);
 	`
 
 	var mvt []byte
 	err := a.Pool.QueryRow(r.Context(), query, z, x, y, startDate, endDate).Scan(&mvt)
-	if (err != nil) {
+	if err != nil {
 		log.Printf("❌ MVT Error (z=%d, x=%d, y=%d): %v", z, x, y, err)
 		errJSON(w, http.StatusInternalServerError, "failed to generate mvt: "+err.Error())
 		return
 	}
 
+	// Cache tiles for 10 minutes — flood data doesn't change per request
 	w.Header().Set("Content-Type", "application/vnd.mapbox-vector-tile")
+	w.Header().Set("Cache-Control", "public, max-age=600")
 	w.Write(mvt)
 }
 func (a *API) GetGFMScenesGeoJSON(w http.ResponseWriter, r *http.Request) {

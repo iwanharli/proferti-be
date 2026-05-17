@@ -18,52 +18,7 @@ import (
 // POST /api/projects
 func (a *API) CreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		DeveloperID string   `json:"developerId"`
-		Name        string   `json:"name"`
-		LocationID  string   `json:"locationId"`
-		Description string   `json:"description"`
-		CoverImage  string   `json:"coverImage"`
-		Promo       string   `json:"promo"`
-		StartPrice  float64  `json:"startPrice"`
-		Status      string   `json:"status"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		errJSON(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	if body.DeveloperID == "" || body.Name == "" || body.LocationID == "" {
-		errJSON(w, http.StatusBadRequest, "developerId, name, and locationId are required")
-		return
-	}
-	slug := fmt.Sprintf("%s-%d", toSlug(body.Name), time.Now().Year())
-	proj, err := repo.CreateProject(
-		r.Context(), a.Pool,
-		body.DeveloperID, body.Name, slug, body.LocationID,
-		nullableStr(body.Description), nullableStr(body.CoverImage), nullableStr(body.Promo),
-		body.StartPrice, body.Status,
-	)
-	if err != nil {
-		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
-			errJSON(w, http.StatusConflict, "nama proyek sudah digunakan pada developer ini")
-			return
-		}
-		errJSON(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Trigger GFM ingestion for the new project's area immediately in background
-	go func() {
-		// We use an empty date range to get the latest data
-		_ = worker.RunFullIngestionCycle(context.Background(), a.Pool, "", "")
-	}()
-
-	writeJSON(w, http.StatusCreated, map[string]any{"project": proj})
-}
-
-// PUT /api/projects/{id}
-func (a *API) UpdateProject(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	var body struct {
-		DeveloperID string  `json:"developerId"`
+		UserID      string  `json:"userId"`
 		Name        string  `json:"name"`
 		LocationID  string  `json:"locationId"`
 		Description string  `json:"description"`
@@ -76,10 +31,66 @@ func (a *API) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		errJSON(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if body.UserID == "" || body.Name == "" || body.LocationID == "" {
+		errJSON(w, http.StatusBadRequest, "userId, name, and locationId are required")
+		return
+	}
+	dev, err := repo.GetDeveloperByUserID(r.Context(), a.Pool, body.UserID)
+	if err != nil {
+		errJSON(w, http.StatusForbidden, "bukan developer terdaftar")
+		return
+	}
 	slug := fmt.Sprintf("%s-%d", toSlug(body.Name), time.Now().Year())
-	err := repo.UpdateProject(
+	proj, err := repo.CreateProject(
 		r.Context(), a.Pool,
-		id, body.DeveloperID, body.Name, slug, body.LocationID,
+		dev.ID, body.Name, slug, body.LocationID,
+		nullableStr(body.Description), nullableStr(body.CoverImage), nullableStr(body.Promo),
+		body.StartPrice, body.Status,
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+			errJSON(w, http.StatusConflict, "nama proyek sudah digunakan pada developer ini")
+			return
+		}
+		errJSON(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	go func() {
+		_ = worker.RunFullIngestionCycle(context.Background(), a.Pool, "", "")
+	}()
+	writeJSON(w, http.StatusCreated, map[string]any{"project": proj})
+}
+
+// PUT /api/projects/{id}
+func (a *API) UpdateProject(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		UserID      string  `json:"userId"`
+		Name        string  `json:"name"`
+		LocationID  string  `json:"locationId"`
+		Description string  `json:"description"`
+		CoverImage  string  `json:"coverImage"`
+		Promo       string  `json:"promo"`
+		StartPrice  float64 `json:"startPrice"`
+		Status      string  `json:"status"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		errJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if body.UserID == "" {
+		errJSON(w, http.StatusBadRequest, "userId is required")
+		return
+	}
+	dev, err := repo.GetDeveloperByUserID(r.Context(), a.Pool, body.UserID)
+	if err != nil {
+		errJSON(w, http.StatusForbidden, "bukan developer terdaftar")
+		return
+	}
+	slug := fmt.Sprintf("%s-%d", toSlug(body.Name), time.Now().Year())
+	err = repo.UpdateProject(
+		r.Context(), a.Pool,
+		id, dev.ID, body.Name, slug, body.LocationID,
 		nullableStr(body.Description), nullableStr(body.CoverImage), nullableStr(body.Promo),
 		body.StartPrice, body.Status,
 	)
@@ -98,14 +109,24 @@ func (a *API) UpdateProject(w http.ResponseWriter, r *http.Request) {
 // DELETE /api/projects/{id}
 func (a *API) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	var body struct {
-		DeveloperID string `json:"developerId"`
+	userID := r.URL.Query().Get("userId")
+	if userID == "" {
+		var body struct {
+			UserID string `json:"userId"`
+		}
+		_ = decodeBody(r, &body)
+		userID = body.UserID
 	}
-	_ = decodeBody(r, &body)
-	if body.DeveloperID == "" {
-		body.DeveloperID = r.URL.Query().Get("developerId")
+	if userID == "" {
+		errJSON(w, http.StatusBadRequest, "userId is required")
+		return
 	}
-	if err := repo.DeleteProject(r.Context(), a.Pool, id, body.DeveloperID); err != nil {
+	dev, err := repo.GetDeveloperByUserID(r.Context(), a.Pool, userID)
+	if err != nil {
+		errJSON(w, http.StatusForbidden, "bukan developer terdaftar")
+		return
+	}
+	if err := repo.DeleteProject(r.Context(), a.Pool, id, dev.ID); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			errJSON(w, http.StatusNotFound, err.Error())
 			return

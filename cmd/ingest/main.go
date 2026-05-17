@@ -4,12 +4,18 @@ import (
 	"context"
 	"flag"
 	"log"
+	"time"
+
 	"proferti-be/internal/config"
 	"proferti-be/internal/db"
 	"proferti-be/internal/worker"
 )
 
 func main() {
+	start := flag.String("start", "", "Tanggal mulai YYYY-MM-DD (kosong = 60 hari terakhir)")
+	end := flag.String("end", "", "Tanggal akhir  YYYY-MM-DD (kosong = hari ini)")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatal(err)
@@ -22,14 +28,15 @@ func main() {
 	}
 	defer pool.Close()
 
-	start := flag.String("start", "", "Tanggal mulai (e.g. 2026-01-01)")
-	end := flag.String("end", "", "Tanggal akhir (e.g. 2026-01-31)")
-	flag.Parse()
+	if *start == "" {
+		log.Println("🚀 Ingest GFM — mode: 60 hari terakhir (mode harian)")
+	} else {
+		log.Printf("🚀 Ingest GFM — mode: backfill %s s/d %s", *start, *end)
+	}
 
-	log.Printf("🚀 Menjalankan Ingest Data Banjir (GFM)... Rentang: %s s/d %s\n", *start, *end)
-	err = worker.RunFullIngestionCycle(ctx, pool, *start, *end)
-	if err != nil {
+	t0 := time.Now()
+	if err := worker.RunFullIngestionCycle(ctx, pool, *start, *end); err != nil {
 		log.Fatal(err)
 	}
-	log.Println("✅ Ingest data banjir selesai.")
+	log.Printf("✅ Selesai dalam %s.", time.Since(t0).Round(time.Second))
 }
